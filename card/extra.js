@@ -1394,7 +1394,7 @@ game.import("card", function () {
 						eff += get.effect(event.targets[i], event.card, player, player);
 						event.card.nature = nature;
 					}
-					return eff > 0;
+					return eff >= 0;
 				},
 				prompt2(event, player) {
 					return "将" + get.translation(event.card) + "改为火属性";
