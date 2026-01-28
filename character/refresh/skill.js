@@ -13262,7 +13262,7 @@ const skills = {
 					suits.add(suit);
 				}
 			}
-			return suits.length == 4;
+			return suits.length >= 4;
 		},
 		content() {
 			player.insertPhase();
