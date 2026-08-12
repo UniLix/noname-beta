@@ -3096,6 +3096,38 @@ export default {
 			audio: true,
 			fullskin: true,
 			type: "trick",
+			getGuoWuxieValue(viewer, map, state, respondCard) {
+				if (get.mode() !== "guozhan" || state <= 0 || map.isJudge || map._source || !get.cardtag(respondCard, "guo")) {
+					return null;
+				}
+				const target = map.target;
+				const targets = map.targets;
+				if (!target || !targets?.length || targets.length <= 1 || !target.isFriendOf(viewer)) {
+					return null;
+				}
+				let index = typeof map.targetIndex === "number" ? map.targetIndex : targets.indexOf(target);
+				if (index < 0) {
+					index = 0;
+				}
+				const factionTargets = targets.slice(index).filter(current => {
+					return current?.isIn() && current.isFriendOf(target);
+				});
+				if (!factionTargets.length) {
+					return null;
+				}
+				let value = 0;
+				for (const current of factionTargets) {
+					value -= get.effect(current, map.card, map.player, viewer) * state;
+					if (get.tag(map.card, "damage") && current.getHp() <= 1) {
+						value += Math.max(0, get.attitude(viewer, current)) * 0.8;
+					}
+				}
+				// 多保护一名同势力角色时，略微提高“国”无懈的优先级，避免与普通无懈同分。
+				if (factionTargets.length > 1 && value > 0) {
+					value += 0.5 * (factionTargets.length - 1);
+				}
+				return value;
+			},
 			ai: {
 				basic: {
 					useful: [6, 4, 3],
@@ -4284,6 +4316,7 @@ export default {
 						}
 						map.target = trigger.target;
 						map.targets = trigger.targets;
+						map.targetIndex = trigger.num;
 						map.tempnowuxie = trigger.targets && trigger.targets.length > 1 && !trigger.multitarget;
 						map.noai = Boolean(trigger.getParent().noai);
 						//如果对拼无懈，获取历史数据
@@ -4354,7 +4387,11 @@ export default {
 							prompt: prompt,
 							type: "wuxie",
 							_global_waiting: true,
-							ai1() {
+							ai1(respondCard) {
+								const guoValue = lib.card.wuxie.getGuoWuxieValue(_status.event.player, map, state, respondCard);
+								if (typeof guoValue === "number" && guoValue > 0) {
+									return guoValue;
+								}
 								if (map.isJudge) {
 									const card = evtmap.card;
 									const source = evtmap.target;
