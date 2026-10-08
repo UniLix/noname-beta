@@ -145,6 +145,7 @@ export default () => {
 			ui.create.cardsAsync();
 			game.finishCards();
 			game.addGlobalSkill("autoswap");
+			game.addGlobalSkill("boss_chongzheng_handcard");
 			ui.arena.setNumber(8);
 			ui.control.style.transitionProperty = "opacity";
 			ui.control.classList.add("bosslist");
@@ -1429,7 +1430,7 @@ export default () => {
 					sex: "male",
 					group: "shen",
 					hp: 8,
-					skills: ["mashu", "wushuang", "boss_baonu", "boss_jingjia", "boss_aozhan"],
+					skills: ["gbwushuang", "boss_baonu", "boss_jingjia"],
 					names: "吕|布",
 					groupInGuozhan: "qun",
 					isBoss: true,
@@ -1439,8 +1440,8 @@ export default () => {
 				boss_lvbu2: {
 					sex: "male",
 					group: "shen",
-					hp: 6,
-					skills: ["mashu", "wushuang", "xiuluo", "shenwei", "shenji"],
+					hp: 4,
+					skills: ["gbwushuang", "xiuluo", "shenwei", "boss_shenji"],
 					names: "吕|布",
 					groupInGuozhan: "qun",
 					isHiddenBoss: true,
@@ -1450,8 +1451,8 @@ export default () => {
 				boss_lvbu3: {
 					sex: "male",
 					group: "shen",
-					hp: 6,
-					skills: ["wushuang", "shenqu", "jiwu"],
+					hp: 4,
+					skills: ["gbwushuang", "shenqu", "jiwu"],
 					names: "吕|布",
 					groupInGuozhan: "qun",
 					isHiddenBoss: true,
@@ -1763,16 +1764,17 @@ export default () => {
 								if (player.hp < player.maxHp) {
 									player.hp++;
 								} else if (player.countCards("h") < 4) {
-									var card = get.cards()[0];
-									var sort = lib.config.sort_card(card);
-									var position = sort > 0 ? player.node.handcards1 : player.node.handcards2;
-									card.fix();
-									card.addTempClass("start");
-									position.insertBefore(card, position.firstChild);
+									// 重整中的角色仍处于死亡状态，普通获得事件无法正常执行。
+									// 使用 directgain 同步手牌区、手牌数显示和录像数据。
+									player.directgain(get.cards(1));
 								}
 								player.update();
 								if (player.storage.boss_chongzheng >= game.bossinfo.chongzheng) {
 									player.revive(player.hp);
+									// 记录该角色是由重整复活，让全局规则同时修正
+									// 手牌上限显示与弃牌阶段的实际计数。
+									player.storage.boss_chongzheng_revived = true;
+									player.update();
 								}
 							}
 							if (game.bossinfo.loopType == 2) {
@@ -1812,6 +1814,15 @@ export default () => {
 						await event.trigger("phaseOver");
 					},
 					async (event, trigger, player) => {
+						// 暴怒切换形态后由吕布立即接管下一回合。接管事件会先让
+						// 当前牌及其引发的濒死流程完整结算，再在这里跳过通常的
+						// “推进到下一座位”，否则刚写入的吕布会被 nextSeat 覆盖。
+						if (event.bossBaonuTakeover) {
+							event.player = event.bossBaonuTakeover;
+							delete event.bossBaonuTakeover;
+							event.goto(0);
+							return;
+						}
 						if (game.bossinfo.loopType == 2) {
 							//最强神话那种回合执行顺序，boss一个回合，玩家再按顺序执行一个回合
 							_status.roundStart = true;
@@ -2585,69 +2596,37 @@ export default () => {
 				chongzheng: 4,
 			},
 			boss_lvbu1: {
-				loopType: 2,
+				// 神吕布先行动，然后所有盟军按座次连续行动，不再于每名盟军之间插入Boss回合。
+				loopType: 1,
 				gameDraw(player) {
-					if (player == game.boss) {
-						return 8;
-					}
-					if (player == game.boss.previous) {
-						return 5;
-					}
-					return 4;
+					return player == game.boss ? 8 : 4;
 				},
 				loopFirst() {
-					return game.boss.nextSeat;
+					return game.boss;
 				},
 				init() {
-					lib.inpile.remove("wugu");
-					lib.inpile.remove("taoyuan");
-					lib.inpile.remove("bagua");
-					lib.inpile.remove("tengjia");
-					lib.inpile.remove("fangtian");
-					lib.inpile.remove("muniu");
-					lib.inpile.addArray(["wushuangfangtianji", "shufazijinguan", "hongmianbaihuapao", "linglongshimandai", "lianjunshengyan"]);
-					lib.inpile.sort(lib.sort.card);
-					var equiplist = [];
-					for (var i = 0; i < ui.cardPile.childElementCount; i++) {
-						var node = ui.cardPile.childNodes[i];
-						if (node.name == "bagua") {
-							node.init([node.suit, node.number, "linglongshimandai"]);
-							equiplist.push(node);
-						} else if (node.name == "tengjia") {
-							node.init([node.suit, node.number, "hongmianbaihuapao"]);
-							equiplist.push(node);
-						} else if (node.name == "fangtian") {
-							node.init([node.suit, node.number, "wushuangfangtianji"]);
-							equiplist.push(node);
-						} else if (node.name == "muniu") {
-							node.init([node.suit, node.number, "shufazijinguan"]);
-							equiplist.push(node);
-						} else if (node.name == "wugu" || node.name == "taoyuan") {
-							node.init([node.suit, node.number, "lianjunshengyan"]);
+					const cardList = [];
+					for (const packName of ["standard", "extra"]) {
+						let pile = lib.cardPile[packName];
+						if (!Array.isArray(pile)) {
+							pile = lib.imported.card?.[packName]?.list;
+							if (typeof pile == "function") pile = pile();
 						}
+						if (!Array.isArray(pile)) continue;
+						const banned = lib.config.bannedpile?.[packName] || [];
+						for (let i = 0; i < pile.length; i++) {
+							if (!banned.includes(i)) cardList.push(pile[i].slice());
+						}
+						const added = lib.config.addedpile?.[packName];
+						if (Array.isArray(added)) cardList.push(...added.map(card => card.slice()));
 					}
-					equiplist.randomSort();
-					var next = game.createEvent("boss_jingjia");
-					next.player = game.boss;
-					next.cards = equiplist;
-					next.setContent(function () {
-						"step 0";
-						if (!cards.length) {
-							event.finish();
-							return;
-						}
-						player.logSkill("boss_jingjia");
-						event.num = 1.5;
-						"step 1";
-						var card = cards.shift();
-						if (player.canEquip(card) && Math.random() < event.num) {
-							player.equip(card);
-							event.num = 0.5;
-						}
-						if (cards.length) {
-							event.redo();
-						}
-					});
+					if (!cardList.length) return;
+					while (ui.cardPile.firstChild) ui.cardPile.firstChild.remove();
+					lib.card.list = cardList;
+					lib.inpile.length = 0;
+					lib.inpile_nature.length = 0;
+					_status.cardtag = {};
+					ui.create.cards();
 				},
 			},
 			boss_zuoci: {
@@ -4672,7 +4651,29 @@ export default () => {
 				},
 			},
 	*/
-			boss_jingjia: {},
+			boss_jingjia: {
+				trigger: { global: "gameStart" },
+				forced: true,
+				async content(event, trigger, player) {
+					const cards = [
+						get.cardPile("fangtian", "cardPile") || game.createCard2("fangtian", "diamond", 12),
+						get.cardPile("chitu", "cardPile") || game.createCard2("chitu", "heart", 5),
+					];
+					for (const card of cards) await player.equip(card);
+				},
+			},
+			boss_chongzheng_handcard: {
+				charlotte: true,
+				ruleSkill: true,
+				popup: false,
+				priority: Infinity,
+				mod: {
+					maxHandcardFinal(player, num) {
+						if (!player.storage.boss_chongzheng_revived) return;
+						return Math.max(num, Math.max(Number(player.hp) || 0, 0));
+					},
+				},
+			},
 			boss_aozhan: {
 				forced: true,
 				locked: true,
@@ -10182,12 +10183,15 @@ export default () => {
 				unique: true,
 				trigger: { player: "phaseDrawBegin" },
 				forced: true,
+				filter(event, player) {
+					return player.isDamaged();
+				},
 				content() {
-					trigger.num += Math.min(3, game.players.length - 1);
+					trigger.num += player.getDamagedHp();
 				},
 				mod: {
 					maxHandcard(player, current) {
-						return current + Math.min(3, game.players.length - 1);
+						return current + player.getDamagedHp();
 					},
 				},
 			},
@@ -10230,6 +10234,54 @@ export default () => {
 					}
 					return _status.boss_baonuwash;
 				},
+				queueTakeover(player) {
+					if (player.storage.boss_baonu_takeover) return;
+					// 将接管事件放在当前出牌阶段的下一个执行位置。这样当前牌及其
+					// 引发的濒死/死亡、技能交互会先完整返回，但不会继续原角色的
+					// 后续出牌阶段。
+					const phaseUse = _status.event.getParent("phaseUse", true);
+					const phase = _status.event.getParent("phase", true);
+					const phaseLoop = _status.event.getParent("phaseLoop", true);
+					const anchor = phaseUse || phase || phaseLoop;
+					if (!anchor) {
+						player.insertPhase("boss_baonu", true);
+						return;
+					}
+					player.storage.boss_baonu_takeover = true;
+					const next = game.createEvent("boss_baonu_takeover", false, anchor);
+					next.player = player;
+					next.forceDie = true;
+					next.setContent(async (event, trigger, player) => {
+						delete player.storage.boss_baonu_takeover;
+						if (!player.isIn()) return;
+						const loop = event.getParent("phaseLoop", true);
+						if (!loop) {
+							player.insertPhase("boss_baonu", true);
+							return;
+						}
+						game.resetSkills();
+						let current = event.getParent();
+						while (current && current != loop) {
+							current.finish();
+							current.untrigger(true);
+							current = current.getParent();
+						}
+						// phaseLoop的下一段通常会把角色推进至nextSeat，因此不能
+						// 只改player/step；留下接管标记，由循环推进处直接回到吕布。
+						loop.bossBaonuTakeover = player;
+						loop.player = player;
+					});
+					// waitNext在子事件完成后用shift移除队首。必须保留正在执行
+					// 的子事件在队首，否则接管事件会被shift误删，根本不会执行。
+					// 沿父链找到当前子事件，将接管安排在它（含濒死结算）之后。
+					if (anchor.next.includes(next)) {
+						let active = _status.event;
+						while (active && active.parent !== anchor) active = active.parent;
+						anchor.next.remove(next);
+						const index = anchor.next.indexOf(active);
+						anchor.next.splice(index < 0 ? 0 : index + 1, 0, next);
+					}
+				},
 				content() {
 					"step 0";
 					if (player.hp > 6) {
@@ -10245,16 +10297,11 @@ export default () => {
 						})
 						.set("prompt", "选择一个形态");
 					"step 2";
-					var hp = player.hp;
 					player.removeSkill("boss_baonu", true);
 					if (result.control == "暴怒战神") {
 						player.init("boss_lvbu2");
 					} else {
 						player.init("boss_lvbu3");
-					}
-					if (hp > 6) {
-						player.maxHp = hp;
-						player.hp = hp;
 					}
 					player.update();
 					ui.clear();
@@ -10266,18 +10313,8 @@ export default () => {
 					}
 					player.discard(player.getCards("j"));
 					"step 3";
-					let evt = _status.event.getParent("phaseLoop", true);
-					if (evt) {
-						game.resetSkills();
-						let evtx = _status.event;
-						while (evtx != evt) {
-							evtx.finish();
-							evtx.untrigger(true);
-							evtx = evtx.getParent();
-						}
-						evtx.player = player;
-						evtx.step = 0;
-					}
+					// 当前结算及濒死流程结束后，立即终止原回合并由新形态接管。
+					if (player.isIn()) lib.skill.boss_baonu.queueTakeover(player);
 					if (game.bossinfo) {
 						game.bossinfo.loopType = 1;
 						_status.roundStart = game.boss;
@@ -10352,16 +10389,68 @@ export default () => {
 					threaten: 1.3,
 				},
 			},
+			boss_shenji: {
+				audio: "shenji",
+				enable: "phaseUse",
+				position: "he",
+				selectCard: 2,
+				filterCard: true,
+				getFangtian() {
+					let card = get.cardPile("fangtian", "field");
+					if (card) return card;
+					for (const current of game.players.concat(game.dead)) {
+						card = current.getCards("hsx", cardx => cardx.name === "fangtian")[0];
+						if (card) return card;
+					}
+					for (const area of [ui.ordering, ui.special]) {
+						card = Array.from(area?.childNodes || []).find(cardx => cardx.name === "fangtian");
+						if (card) return card;
+					}
+					return null;
+				},
+				filter(event, player) {
+					if (player.countCards("he") < 2 || player.getEquips(1).some(card => card.name === "fangtian")) return false;
+					const card = lib.skill.boss_shenji.getFangtian();
+					return !!card && player.canEquip(card, true);
+				},
+				check(card) {
+					return 7 - get.value(card);
+				},
+				async content(event, trigger, player) {
+					const card = lib.skill.boss_shenji.getFangtian();
+					if (card && player.canEquip(card, true)) {
+						await player.equip(card);
+					}
+				},
+				mod: {
+					cardUsable(card, player, num) {
+						if (card.name === "sha" && player.getEquip(1)) return num + 1;
+					},
+				},
+				ai: {
+					// 高于普通武器及“所有模式武器替换”的装备顺序，
+					// 先发动【神戟】取回方天画戟，避免刚装备的其他武器立即被替换。
+					order: 15,
+					result: {
+						player(player) {
+							const current = player.getEquip(1);
+							if (!current) return 2;
+							const fangtian = lib.skill.boss_shenji.getFangtian();
+							return fangtian && get.equipValue(fangtian, player) > get.equipValue(current, player) + 2 ? 1 : 0;
+						},
+					},
+				},
+			},
 			shenqu: {
 				audio: 2,
 				group: "shenqu2",
 				trigger: { global: "phaseZhunbeiBegin" },
 				filter(event, player) {
-					return player.countCards("h") <= player.maxHp;
+					return player.countCards("h") < player.maxHp;
 				},
 				frequent: true,
 				content() {
-					player.draw(2);
+					player.draw();
 				},
 			},
 			shenqu2: {
@@ -10376,23 +10465,29 @@ export default () => {
 				},
 			},
 			jiwu: {
-				derivation: ["qiangxix", "retieji", "olxuanfeng", "rewansha"],
+				derivation: ["gbqiangxi", "gbidtieji", "xuanlve", "wansha"],
 				audio: 2,
 				enable: "phaseUse",
+				hasAttackTarget(player) {
+					return game.hasPlayer(target => target !== player && get.attitude(player, target) < 0 && player.inRange(target));
+				},
+				hasXuanlveValue(player) {
+					return !player.hasSkill("xuanlve") && player.countCards("he", { type: "equip" }) > 0;
+				},
 				filter(event, player) {
 					if (player.countCards("he") == 0) {
 						return false;
 					}
-					if (!player.hasSkill("qiangxix")) {
+					if (!player.hasSkill("gbqiangxi")) {
 						return true;
 					}
-					if (!player.hasSkill("retieji")) {
+					if (!player.hasSkill("gbidtieji")) {
 						return true;
 					}
-					if (!player.hasSkill("olxuanfeng")) {
+					if (!player.hasSkill("xuanlve")) {
 						return true;
 					}
-					if (!player.hasSkill("rewansha")) {
+					if (!player.hasSkill("wansha")) {
 						return true;
 					}
 					return false;
@@ -10400,7 +10495,11 @@ export default () => {
 				filterCard: true,
 				position: "he",
 				check(card) {
-					if (get.position(card) == "e" && _status.event.player.hasSkill("olxuanfeng")) {
+					const player = _status.event.player;
+					if (!lib.skill.jiwu.hasAttackTarget(player) && !lib.skill.jiwu.hasXuanlveValue(player)) {
+						return 0;
+					}
+					if (get.position(card) == "e" && player.hasSkill("xuanlve")) {
 						return 16 - get.value(card);
 					}
 					return 7 - get.value(card);
@@ -10408,17 +10507,17 @@ export default () => {
 				content() {
 					"step 0";
 					var list = [];
-					if (!player.hasSkill("qiangxix")) {
-						list.push("qiangxix");
+					if (!player.hasSkill("gbqiangxi")) {
+						list.push("gbqiangxi");
 					}
-					if (!player.hasSkill("retieji")) {
-						list.push("retieji");
+					if (!player.hasSkill("gbidtieji")) {
+						list.push("gbidtieji");
 					}
-					if (!player.hasSkill("olxuanfeng")) {
-						list.push("olxuanfeng");
+					if (!player.hasSkill("xuanlve")) {
+						list.push("xuanlve");
 					}
-					if (!player.hasSkill("rewansha")) {
-						list.push("rewansha");
+					if (!player.hasSkill("wansha")) {
+						list.push("wansha");
 					}
 					if (list.length == 1) {
 						player.addTempSkills(list[0]);
@@ -10426,37 +10525,41 @@ export default () => {
 					} else {
 						player
 							.chooseControl(list, function () {
-								if (list.includes("olxuanfeng") && player.countCards("he", { type: "equip" })) {
-									return "olxuanfeng";
+								const hasAttackTarget = lib.skill.jiwu.hasAttackTarget(player);
+								if (list.includes("xuanlve") && player.countCards("he", { type: "equip" })) {
+									return "xuanlve";
 								}
-								if (!player.getStat().skill.qiangxix) {
-									if (player.hasSkill("qiangxix") && player.getEquip(1) && list.includes("olxuanfeng")) {
-										return "olxuanfeng";
+								if (hasAttackTarget && !player.getStat().skill.gbqiangxi) {
+									if (player.hasSkill("gbqiangxi") && player.getEquip(1) && list.includes("xuanlve")) {
+										return "xuanlve";
 									}
-									if (list.includes("rewansha") || list.includes("qiangxix")) {
+									if (list.includes("wansha") || list.includes("gbqiangxi")) {
 										var players = game.filterPlayer();
 										for (var i = 0; i < players.length; i++) {
 											if (players[i].hp == 1 && get.attitude(player, players[i]) < 0) {
-												if (list.includes("rewansha")) {
-													return "rewansha";
+												if (list.includes("wansha")) {
+													return "wansha";
 												}
-												if (list.includes("qiangxix")) {
-													return "qiangxix";
+												if (list.includes("gbqiangxi")) {
+													return "gbqiangxi";
 												}
 											}
 										}
 									}
 								}
-								if (list.includes("qiangxix")) {
-									return "qiangxix";
+								if (hasAttackTarget && list.includes("gbqiangxi")) {
+									return "gbqiangxi";
 								}
-								if (list.includes("rewansha")) {
-									return "rewansha";
+								if (hasAttackTarget && list.includes("wansha")) {
+									return "wansha";
 								}
-								if (list.includes("olxuanfeng")) {
-									return "olxuanfeng";
+								if (list.includes("xuanlve")) {
+									return "xuanlve";
 								}
-								return "retieji";
+								if (list.includes("gbidtieji")) {
+									return "gbidtieji";
+								}
+								return list[0];
 							})
 							.set("prompt", "选择获得一项技能直到回合结束");
 					}
@@ -10467,14 +10570,17 @@ export default () => {
 				ai: {
 					order() {
 						var player = _status.event.player;
+						if (!lib.skill.jiwu.hasAttackTarget(player)) {
+							return lib.skill.jiwu.hasXuanlveValue(player) ? 6 : 0;
+						}
 						if (player.countCards("e", { type: "equip" })) {
 							return 10;
 						}
-						if (!player.getStat().skill.qiangxix) {
-							if (player.hasSkill("qiangxix") && player.getEquip(1) && !player.hasSkill("olxuanfeng")) {
+						if (!player.getStat().skill.gbqiangxi) {
+							if (player.hasSkill("gbqiangxi") && player.getEquip(1) && !player.hasSkill("xuanlve")) {
 								return 10;
 							}
-							if (player.hasSkill("rewansha")) {
+							if (player.hasSkill("wansha")) {
 								return 1;
 							}
 							var players = game.filterPlayer();
@@ -10488,14 +10594,17 @@ export default () => {
 					},
 					result: {
 						player(player) {
+							if (!lib.skill.jiwu.hasAttackTarget(player)) {
+								return lib.skill.jiwu.hasXuanlveValue(player) ? 1 : 0;
+							}
 							if (player.countCards("e", { type: "equip" })) {
 								return 1;
 							}
-							if (!player.getStat().skill.qiangxix) {
-								if (player.hasSkill("qiangxix") && player.getEquip(1) && !player.hasSkill("olxuanfeng")) {
+							if (!player.getStat().skill.gbqiangxi) {
+								if (player.hasSkill("gbqiangxi") && player.getEquip(1) && !player.hasSkill("xuanlve")) {
 									return 1;
 								}
-								if (!player.hasSkill("rewansha") || !player.hasSkill("qiangxix")) {
+								if (!player.hasSkill("wansha") || !player.hasSkill("gbqiangxi")) {
 									var players = game.filterPlayer();
 									for (var i = 0; i < players.length; i++) {
 										if (players[i].hp == 1 && get.attitude(player, players[i]) < 0) {
@@ -11220,16 +11329,18 @@ export default () => {
 			boss_baonu: "暴怒",
 			boss_baonu_info: "锁定技，当你的体力值降至4或更低时，你变身为暴怒战神或神鬼无前，并立即开始你的回合。",
 			shenwei: "神威",
-			shenwei_info: "锁定技，摸牌阶段，你额外摸X张牌，你的手牌上限+X（X为场上其他角色的数目且至多为3）。",
+			shenwei_info: "锁定技，摸牌阶段，你额外摸X张牌，你的手牌上限+X（X为你已损失的体力值）。",
+			boss_shenji: "神戟",
+			boss_shenji_info: "你可以弃置两张牌，将【方天画戟】从任意位置置于你的装备区。若你的装备区里有武器牌，你使用【杀】的次数上限+1。",
 			xiuluo: "修罗",
 			xiuluo_info: "准备阶段，你可以弃置一张牌，然后弃置你判定区内一张同花色的牌，然后你可以重复此流程。",
 			shenqu: "神躯",
-			shenqu_info: "每名角色的准备阶段，若你的手牌数少于或等于你的体力上限数，你可以摸两张牌；当你受到伤害后，你可以使用一张【桃】。",
+			shenqu_info: "每名角色的准备阶段，若你的手牌数少于你的体力上限数，你可以摸一张牌；当你受到伤害后，你可以使用一张【桃】。",
 			jiwu: "极武",
-			jiwu_info: "出牌阶段，你可以弃置一张牌，然后获得获得以下一项技能直到回合结束：〖强袭〗、〖铁骑〗、〖旋风〗、〖完杀〗。",
+			jiwu_info: "出牌阶段，你可以弃置一张牌，然后获得以下一项技能直到回合结束：〖强袭〗、〖铁骑〗、〖旋略〗、〖完杀〗。",
 
 			boss_jingjia: "精甲",
-			boss_jingjia_info: "锁定技，游戏开始时，将本局游戏中加入的装备随机置入你的装备区。",
+			boss_jingjia_info: "锁定技，游戏开始时，将【方天画戟】、【赤兔】置入你的装备区。",
 			boss_aozhan: "鏖战",
 			boss_aozhan_info: "锁定技，若你装备区内有：武器牌，你可以多使用一张【杀】；防具牌，防止你受到的超过1点的伤害；坐骑牌，摸牌阶段多摸一张牌；宝物牌，跳过你的判定阶段。",
 

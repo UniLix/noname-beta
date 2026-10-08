@@ -2235,14 +2235,14 @@ const skills = {
 	shenji: {
 		audio: 2,
 		mod: {
-			selectTarget(card, player, range) {
-				if (range[1] === -1) {
-					return;
-				}
-				if (card.name === "sha") {
-					range[1] += 2;
-				}
-			},
+			// selectTarget(card, player, range) {
+			// 	if (range[1] === -1) {
+			// 		return;
+			// 	}
+			// 	if (card.name === "sha") {
+			// 		range[1] += 2;
+			// 	}
+			// },
 			cardUsable(card, player, num) {
 				if (card.name === "sha") {
 					return num + 1;

@@ -16894,6 +16894,7 @@ export default {
 	},
 	xuanlve: {
 		audio: 2,
+		audioname2: { boss_lvbu3: "olxuanfeng" },
 		trigger: {
 			player: "loseAfter",
 			global: ["equipAfter", "addJudgeAfter", "gainAfter", "loseAsyncAfter", "addToExpansionAfter"],

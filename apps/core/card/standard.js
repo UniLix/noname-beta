@@ -997,8 +997,22 @@ export default {
 			bingzhu: ["吕布"],
 			distance: { attackFrom: -3 },
 			ai: {
+				equipValue(card, player) {
+					const shaCount = player.countCards("hs", current => current !== card && get.name(current, player) === "sha");
+					const enemyCount = game.countPlayer(current => current !== player && get.attitude(player, current) < 0);
+					// 方天画戟的核心收益来自额外目标；敌人不足两名时不再
+					// 计入多目标和强命加成，只保留少量攻击距离价值。
+					if (enemyCount < 2) {
+						return (enemyCount === 0 ? 0.5 : 2) + Math.min(shaCount, 1) * 0.25;
+					}
+					let value = 5.5 + Math.min(shaCount, 2) * 0.75 + Math.min(enemyCount, 2) * 0.4;
+					const skills = player.getSkills("invisible", false);
+					game.expandSkills(skills);
+					if (skills.some(skill => get.info(skill)?.ai?.directHit_ai)) value += 2.5;
+					return Math.min(value, 10);
+				},
 				basic: {
-					equipValue: 2.5,
+					equipValue: 5.5,
 				},
 			},
 			skills: ["fangtian_skill", "fangtian_guozhan"],

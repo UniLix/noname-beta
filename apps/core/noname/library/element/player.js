@@ -3227,7 +3227,7 @@ export class Player extends HTMLDivElement {
 				});
 			});
 		for (let i = 0; i < equips1.length; i++) {
-			const info = get.info(equips1[i]).distance;
+			const info = get.info(equips1[i])?.distance;
 			if (!info) {
 				continue;
 			}
@@ -3237,7 +3237,7 @@ export class Player extends HTMLDivElement {
 			}
 		}
 		for (let i = 0; i < equips2.length; i++) {
-			const info = get.info(equips2[i]).distance;
+			const info = get.info(equips2[i])?.distance;
 			if (!info) {
 				continue;
 			}
@@ -12674,9 +12674,9 @@ export class Player extends HTMLDivElement {
 				});
 			});
 			equips.forEach(card => {
-				const info = get.info(card, false).distance;
-				if (info && info.globalFrom) {
-					range += info.globalFrom;
+				const distance = get.info(card, false)?.distance;
+				if (distance && distance.globalFrom) {
+					range += distance.globalFrom;
 				}
 			});
 			return player.getEquipRange() - range;
@@ -12740,7 +12740,7 @@ export class Player extends HTMLDivElement {
 			});
 		});
 		for (var i = 0; i < equips.length; i++) {
-			var info = get.info(equips[i]).distance;
+			var info = get.info(equips[i])?.distance;
 			if (!info) {
 				continue;
 			}
@@ -12760,7 +12760,7 @@ export class Player extends HTMLDivElement {
 			});
 		});
 		for (var i = 0; i < equips.length; i++) {
-			var info = get.info(equips[i]).distance;
+			var info = get.info(equips[i])?.distance;
 			if (!info) {
 				continue;
 			}
