@@ -1723,7 +1723,7 @@ export default () => {
 				boss.directgain(get.cards(4));
 			},
 			checkResult() {
-				if (game.boss == game.me) {
+				if (game.me.side === game.boss.side) {
 					game.over(game.boss.isAlive());
 				} else {
 					game.over(!game.boss.isAlive());
@@ -10474,6 +10474,33 @@ export default () => {
 				hasXuanlveValue(player) {
 					return !player.hasSkill("xuanlve") && player.countCards("he", { type: "equip" }) > 0;
 				},
+				hasWanshaValue(player) {
+					return game.countPlayer(target => target !== player && target.isIn() &&
+						(get.mode() === "boss" ? target.side !== player.side : get.attitude(player, target) < 0)) >= 2;
+				},
+				hasAIChoice(player) {
+					return ["gbqiangxi", "gbidtieji", "xuanlve"].some(skill => !player.hasSkill(skill)) ||
+						(!player.hasSkill("wansha") && lib.skill.jiwu.hasWanshaValue(player));
+				},
+				getDiscardScore(card, player) {
+					if (!lib.filter.cardDiscardable(card, player, "jiwu")) return 0;
+					const value = get.value(card, player);
+					if (get.type(card, player) === "equip") {
+						const equipValue = Math.max(0, get.equipValue(card, player));
+						const equipped = get.position(card) === "e";
+						const xuanlveBonus = equipped && player.hasSkill("xuanlve") ? 3 : 0;
+						return 7 + xuanlveBonus - value - equipValue * (equipped ? 0.8 : 0.5);
+					}
+					// 保留仍能对敌人使用的杀，包括被技能修改牌名后的杀。
+					// 只检查合法性和敌我关系，避免getUseValue递归进入极武AI。
+					if (get.name(card, player) === "sha" && game.hasPlayer(target =>
+						target !== player && get.attitude(player, target) < 0 && player.canUse(card, target))) return 0;
+					// 高价值手牌不作为获得临时技能的代价。
+					return value >= 6 ? 0 : 6 - value;
+				},
+				hasAffordableCard(player) {
+					return player.hasCard(card => lib.skill.jiwu.getDiscardScore(card, player) > 0, "he");
+				},
 				filter(event, player) {
 					if (player.countCards("he") == 0) {
 						return false;
@@ -10496,13 +10523,11 @@ export default () => {
 				position: "he",
 				check(card) {
 					const player = _status.event.player;
+					if (!lib.skill.jiwu.hasAIChoice(player)) return 0;
 					if (!lib.skill.jiwu.hasAttackTarget(player) && !lib.skill.jiwu.hasXuanlveValue(player)) {
 						return 0;
 					}
-					if (get.position(card) == "e" && player.hasSkill("xuanlve")) {
-						return 16 - get.value(card);
-					}
-					return 7 - get.value(card);
+					return lib.skill.jiwu.getDiscardScore(card, player);
 				},
 				content() {
 					"step 0";
@@ -10525,6 +10550,8 @@ export default () => {
 					} else {
 						player
 							.chooseControl(list, function () {
+								// 仅过滤AI的选择，玩家仍可手动获得完杀。
+								if (!lib.skill.jiwu.hasWanshaValue(player)) list = list.filter(skill => skill !== "wansha");
 								const hasAttackTarget = lib.skill.jiwu.hasAttackTarget(player);
 								if (list.includes("xuanlve") && player.countCards("he", { type: "equip" })) {
 									return "xuanlve";
@@ -10570,6 +10597,8 @@ export default () => {
 				ai: {
 					order() {
 						var player = _status.event.player;
+						if (!lib.skill.jiwu.hasAIChoice(player)) return 0;
+						if (!lib.skill.jiwu.hasAffordableCard(player)) return 0;
 						if (!lib.skill.jiwu.hasAttackTarget(player)) {
 							return lib.skill.jiwu.hasXuanlveValue(player) ? 6 : 0;
 						}
@@ -10594,6 +10623,8 @@ export default () => {
 					},
 					result: {
 						player(player) {
+							if (!lib.skill.jiwu.hasAIChoice(player)) return 0;
+							if (!lib.skill.jiwu.hasAffordableCard(player)) return 0;
 							if (!lib.skill.jiwu.hasAttackTarget(player)) {
 								return lib.skill.jiwu.hasXuanlveValue(player) ? 1 : 0;
 							}

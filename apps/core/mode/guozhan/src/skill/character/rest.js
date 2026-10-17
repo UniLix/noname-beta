@@ -6634,13 +6634,20 @@ export default {
 		content() {
 			"step 0";
 			player.chooseTarget("请选择【点虎】的目标", true, "给一名角色标上“虎”标记。当你或你的队友对该角色造成伤害后摸一张牌。", lib.filter.notMe).set("ai", function (target) {
-				var player = _status.event.player;
-				var distance = game.countPlayer(function (current) {
-					if (current.isFriendOf(player)) {
-						return Math.pow(get.distance(current, target), 1.2);
+				const player = _status.event.player;
+				const attitude = get.attitude(player, target);
+				// 点虎奖励对标记目标的输出；友方不能因距离近而获得高分。
+				if (target.isFriendOf(player) || attitude > 0) return -100 - attitude;
+				const enemy = target.isEnemyOf(player) || attitude < 0;
+				const hp = Math.max(0, target.getHp());
+				const health = Math.min(1, hp / Math.max(1, target.maxHp));
+				let reach = 0;
+				game.countPlayer(current => {
+					if (current === player || current.isFriendOf(player)) {
+						reach += 1 / Math.max(1, get.distance(current, target));
 					}
 				});
-				return 10 / distance;
+				return (enemy ? 100 : 0) + Math.min(10, hp) * 4 + health * 6 + Math.min(3, reach);
 			});
 			"step 1";
 			if (result.bool) {
@@ -19554,6 +19561,9 @@ export default {
 					if (!yes) {
 						return false;
 					}
+					// 神关羽、神吕布受伤时优先亮将取得梦魇/暴怒收益。
+					if (["gbwuhun", "gbbaonu"].includes(skill) && trigger._trigger?.name === "damage" &&
+						trigger._trigger.player === player && trigger._trigger.num > 0) return true;
 					if (player.hasSkillTag("mingzhi_no")) {
 						return false;
 					}

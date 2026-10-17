@@ -185,6 +185,10 @@ export default {
 					next.set(
 						"toUse",
 						(() => {
+							// 出师已发动且智哲仍可防止友伤时，保留闪以配合来源摸牌。
+							if (lib.skill.gbchushi?.shouldFriendTakeSha?.(player, target, event.getParent("useCard"))) {
+								return false;
+							}
 							if (target.hasSkillTag("noShan", null, "use")) {
 								return false;
 							}
