@@ -4656,10 +4656,10 @@ export default () => {
 				forced: true,
 				async content(event, trigger, player) {
 					const cards = [
-						get.cardPile("fangtian", "cardPile") || game.createCard2("fangtian", "diamond", 12),
+						lib.skill.boss_shenji.getFangtian(),
 						get.cardPile("chitu", "cardPile") || game.createCard2("chitu", "heart", 5),
 					];
-					for (const card of cards) await player.equip(card);
+					for (const card of cards) if (card) await player.equip(card);
 				},
 			},
 			boss_chongzheng_handcard: {
@@ -10396,14 +10396,17 @@ export default () => {
 				selectCard: 2,
 				filterCard: true,
 				getFangtian() {
-					let card = get.cardPile("fangtian", "field");
-					if (card) return card;
-					for (const current of game.players.concat(game.dead)) {
-						card = current.getCards("hsx", cardx => cardx.name === "fangtian")[0];
-						if (card) return card;
+					// 优先取回角色持有的实体牌；不使用会优先命中牌堆的field搜索。
+					// 装备区单独优先，随后检查手牌、特殊手牌、判定区和扩展区。
+					const players = game.players.concat(game.dead);
+					for (const position of ["e", "hsjx"]) {
+						for (const current of players) {
+							const card = current.getCards(position, cardx => cardx.name === "fangtian")[0];
+							if (card) return card;
+						}
 					}
-					for (const area of [ui.ordering, ui.special]) {
-						card = Array.from(area?.childNodes || []).find(cardx => cardx.name === "fangtian");
+					for (const area of [ui.ordering, ui.special, ui.cardPile, ui.discardPile]) {
+						const card = Array.from(area?.childNodes || []).find(cardx => cardx.name === "fangtian");
 						if (card) return card;
 					}
 					return null;
