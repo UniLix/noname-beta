@@ -355,6 +355,12 @@ const characters = {
 		skills: ["jxlianpo", "jxzhaoluan"],
 		groupInGuozhan: "qun",
 	},
+	ps_shen_jiaxu: {
+		sex: "male",
+		group: "shen",
+		hp: 3,
+		skills: ["psxiebing", "pszhongshi", "pszhaoluan"],
+	},
 	boss_zhaoyun: {
 		sex: "male",
 		group: "shen",
@@ -1440,6 +1446,7 @@ const characters = {
 		group: "qun",
 		hp: 4,
 		skills: ["hm_dafu", "hm_jipin"],
+		img: "image/character/yudu.jpg",
 	},
 	hm_taosheng: {
 		sex: "male",
@@ -1993,7 +2000,7 @@ const characters = {
 		sex: "female",
 		group: "shu",
 		hp: 4,
-		skills: ["jdsbjieyin", "jdsbliangzhu", "sbxiaoji"],
+		skills: ["jdsbjieyin", "jdsbliangzhu", "jdsbxiaoji"],
 		dieAudios: ["sb_sunshangxiang"],
 		groupBorder: "wu",
 	},

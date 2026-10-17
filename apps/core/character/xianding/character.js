@@ -4,6 +4,7 @@ const characters = {
 		group: "wei",
 		hp: 3,
 		skills: ["dcshiyu", "dcshuaijian"],
+		groupBorder: "jin",
 	},
 	cuizhi: {
 		sex: "female",
@@ -49,6 +50,12 @@ const characters = {
 		hp: 4,
 		skills: ["dcsbjinglian", "dcsbxieshu", "dcsbzongzi"],
 		clans: ["颍川钟氏"],
+	},
+	dc_sb_weiguan: {
+		sex: "male",
+		group: "wei",
+		hp: 4,
+		skills: ["dcsbqingshi", "dcsbzaoji"],
 	},
 	lizhaoyi: {
 		sex: "female",
