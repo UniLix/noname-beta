@@ -7000,6 +7000,21 @@ else if (entry[1] !== void 0) stringifying[key] = JSON.stringify(entry[1]);*/
 						})
 					) {
 						temp2 = cache.delegate(temp2.effect).target(card, player, target, result2, linking);
+						// 卖血收益不应单独诱导主动杀队友；仍保留减益、防御及连环传导评估。
+						const skillAI = info.ai;
+						if (!linking && card.name === "sha" && player !== target &&
+							cache.get.attitude(player, target) > 0 &&
+							(skillAI.maixie || skillAI.maixie_hp || skillAI.maixie_defend)) {
+							if (Array.isArray(temp2)) {
+								temp2 = temp2.slice();
+								// 不计受伤后给目标或出杀者的正收益，也不把伤害反转成收益。
+								if (temp2[0] < 0) temp2[0] = 1;
+								if (temp2[1] > 0) temp2[1] = 0;
+								if (temp2.length === 4 && temp2[3] > 0) temp2[3] = 0;
+							} else if (typeof temp2 === "number" && temp2 < 0) {
+								temp2 = 1;
+							}
+						}
 					} else {
 						temp2 = undefined;
 					}

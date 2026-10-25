@@ -711,6 +711,10 @@ export default {
 							if (eff > 0) {
 								return "take_damage";
 							}
+							// 体力健康时优先保留成套装备，不为避免1点伤害弃掉两件以上装备。
+							if (player.hp >= 3 && player.countCards("e") >= 2) {
+								return "take_damage";
+							}
 							if (player.hasSkillTag("noe")) {
 								return "discard_card";
 							}

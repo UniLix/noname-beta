@@ -1,4 +1,5 @@
 import { lib, game, ui, get, ai, _status } from "noname";
+import xiandingCharacters from "../character/xianding/character.js";
 export const type = "mode";
 /**
  * @type { () => importModeConfig }
@@ -858,6 +859,16 @@ export default () => {
 		},
 		characterPack: {
 			mode_boss: {
+				boss_wu_zhugeliang: {
+					...xiandingCharacters.wu_zhugeliang,
+					hp: 7,
+					maxHp: 7,
+					skills: xiandingCharacters.wu_zhugeliang.skills.map(skill => ({ dcjincui: "boss_dcjincui", dcqingshi: "boss_dcqingshi", dczhizhe: "boss_zhizhe" })[skill] || skill),
+					img: "image/character/wu_zhugeliang.jpg",
+					dieAudios: ["wu_zhugeliang"],
+					isBoss: true,
+					isBossAllowed: true,
+				},
 				boss_hundun: {
 					sex: "male",
 					group: "qun",
@@ -2758,6 +2769,7 @@ export default () => {
 			boss_zhouyu: "红莲业火",
 			boss_pangtong: "铁索连舟",
 			boss_zhugeliang: "观星唤雨",
+			boss_wu_zhugeliang: "忠武良弼",
 			boss_zhangjiao: "驱雷策电",
 			boss_zuoci: "仙人之怒",
 			boss_liubei: "御驾亲征",
@@ -2822,6 +2834,162 @@ export default () => {
 		},
 
 		skill: {
+			boss_dcjincui: {
+				audio: "dcjincui",
+				forced: true,
+				trigger: { player: "phaseDrawBefore" },
+				group: "boss_dcjincui_start",
+				getCombinations(cards) {
+					const combinations = [];
+					for (let mask = 1; mask < (1 << cards.length); mask++) {
+						const chosen = cards.filter((card, index) => mask & (1 << index));
+						const sum = chosen.reduce((total, card) => total + (get.number(card, false) || 0), 0);
+						if (sum > 0 && sum % 7 === 0) combinations.push(chosen);
+					}
+					return combinations;
+				},
+				async content(event, trigger, player) {
+					trigger.cancel();
+					const cards = get.cards(7);
+					await game.cardsGotoOrdering(cards);
+					await player.showCards(cards, "尽瘁：展示牌堆顶七张牌");
+					if (player.isIn() && cards.some(card => get.number(card, false) === 7)) {
+						await player.loseMaxHp();
+						if (player.isIn() && player.hp < player.maxHp) await player.recover(player.maxHp - player.hp);
+					}
+					const combinations = lib.skill.boss_dcjincui.getCombinations(cards);
+					let chosen = [];
+					if (player.isIn() && combinations.length) {
+						const score = combo => combo.reduce((sum, card) => sum + get.value(card, player), 0);
+						const best = combinations.slice().sort((a, b) => score(b) - score(a))[0];
+						const result = await player.chooseButton(["尽瘁：获得点数之和为7的正整数倍的牌", cards], [1, cards.length], true)
+							.set("filterButton", button => combinations.some(combo => combo.includes(button.link) && ui.selected.buttons.every(selected => combo.includes(selected.link))))
+							.set("filterOk", () => {
+								const sum = ui.selected.buttons.reduce((total, button) => total + (get.number(button.link, false) || 0), 0);
+								return sum > 0 && sum % 7 === 0;
+							})
+							.set("ai", button => best.includes(button.link) ? 10 : -1).forResult();
+						if (result?.bool && combinations.some(combo => combo.length === result.links?.length && combo.every(card => result.links.includes(card)))) chosen = result.links;
+					}
+					chosen = chosen.filter(card => get.position(card, true) === "o");
+					if (chosen.length && player.isIn()) {
+						await player.gain(chosen, "gain2");
+					}
+					const rest = cards.filter(card => get.position(card, true) === "o");
+					if (rest.length) await game.cardsDiscard(rest);
+				},
+				subSkill: {
+					start: {
+						audio: "dcjincui",
+						// 挑战模式gameStart早于起始发牌，首个回合前补牌才是“摸至七张”。
+						trigger: { global: "phaseBefore" },
+						forced: true,
+						filter(event, player) { return game.phaseNumber === 0 && !player.storage.boss_dcjincui_started; },
+						async content(event, trigger, player) {
+							player.storage.boss_dcjincui_started = true;
+							if (player.countCards("h") < 7) await player.draw(7 - player.countCards("h"));
+						},
+					},
+				},
+			},
+			boss_dcqingshi: {
+				audio: "dcqingshi",
+				getAttitude(player, target) {
+					const viewer = player._trueMe || player;
+					if (get.mode() === "boss" && typeof viewer.side === "boolean" && typeof target.side === "boolean") return viewer.side === target.side ? 5 : -5;
+					return get.attitude(viewer, target);
+				},
+				getDiscardScore(player, target) {
+					const cards = target.getCards("he", card => lib.filter.cardDiscardable(card, target, "boss_dcqingshi"));
+					if (!cards.length) return 0;
+					const att = lib.skill.boss_dcqingshi.getAttitude(player, target);
+					if (att >= 0) return -att;
+					return -att + 2 + Math.min(3, Math.max(0, Math.min(...cards.map(card => get.value(card, target)))));
+				},
+				getTargetScore(player, target, card, discard) {
+					const skill = lib.skill.boss_dcqingshi;
+					if (discard) return skill.getDiscardScore(player, target);
+					const nextBenefit = game.hasPlayer(current => current !== player && skill.getDiscardScore(player, current) > 0);
+					if (!get.tag(card, "damage")) return nextBenefit ? 2 : 0;
+					const effect = get.damageEffect(target, player, player._trueMe || player, get.nature(card));
+					// 不以切换状态为由给友方追加有害伤害。
+					if (effect < 0 || skill.getAttitude(player, target) > 0 && effect <= 0) return -10;
+					if (effect > 0) return effect + (target.hp <= 2 ? 8 : 3);
+					return nextBenefit ? 1 : 0;
+				},
+				mod: {
+					aiOrder(player, card, num) {
+						if (typeof card === "string" || typeof num !== "number" || num <= 0) return;
+						const name = get.name(card, player);
+						const used = card.cards || [card];
+						if (!player.hasCard(other => !used.includes(other) && get.name(other) === name, "h")) return;
+						const skill = lib.skill.boss_dcqingshi;
+						if (player.storage.boss_dcqingshi || !get.tag(card, "damage")) {
+							if (game.hasPlayer(target => target !== player && skill.getDiscardScore(player, target) > 0)) return num + 4;
+						} else if (game.hasPlayer(target => player.canUse(card, target) && skill.getTargetScore(player, target, card, false) > 0)) return num + 5;
+					},
+				},
+				trigger: { player: "useCard" },
+				zhuanhuanji: true,
+				mark: true,
+				marktext: "☯",
+				intro: { content(storage) {
+					return storage ? "下次发动：令任意名其他角色各弃置一张牌" : "下次发动：令此牌对其中一个目标角色造成的伤害+1";
+				} },
+				filter(event, player) {
+					if (!player.isPhaseUsing() || !player.hasCard(card => get.name(card) === event.card.name, "h")) return false;
+					return player.storage.boss_dcqingshi ? game.hasPlayer(target => target !== player) : !!event.targets?.length;
+				},
+				async cost(event, trigger, player) {
+					const discard = !!player.storage.boss_dcqingshi;
+					const result = await player.chooseTarget(
+						get.prompt(event.skill),
+						discard ? "令任意名其他角色各弃置一张牌" : "令此牌对其中一个目标角色造成的伤害+1",
+						discard ? [1, Infinity] : 1,
+						(card, player, target) => discard ? target !== player : trigger.targets.includes(target))
+						.set("ai", target => lib.skill.boss_dcqingshi.getTargetScore(player, target, trigger.card, discard)).forResult();
+					event.result = { bool: !!result?.bool, targets: result?.targets, cost_data: discard };
+				},
+				async content(event, trigger, player) {
+					player.changeZhuanhuanji("boss_dcqingshi");
+					if (!event.cost_data) {
+						player.addTempSkill("dcqingshi_ex");
+						player.storage.dcqingshi_ex ??= [];
+						player.storage.dcqingshi_ex.push([event.targets[0], trigger.card]);
+						return;
+					}
+					const targets = event.targets.slice().sortBySeat();
+					player.line(targets);
+					for (const target of targets) {
+						if (target.isIn()) await target.chooseToDiscard("情势：弃置一张牌", "he", 1, true);
+					}
+				},
+			},
+			boss_zhizhe: {
+				audio: "dczhizhe",
+				trigger: { player: ["useCardAfter", "respondAfter"] },
+				getCards(event, player) {
+					const cards = event.cards || [];
+					// 只收回本次使用/打出时从手牌区失去且仍在处理区或弃牌堆的实体牌。
+					return cards.filter(card => ["o", "d"].includes(get.position(card, true)) &&
+						player.hasHistory("lose", loss => (loss.relatedEvent || loss.getParent()) === event && loss.hs?.includes(card)));
+				},
+				filter(event, player) {
+					if (!player.isPhaseUsing()) return false;
+					const phase = event.getParent("phaseUse", true);
+					if (!phase || player.storage.boss_zhizhe_phase === phase) return false;
+					return lib.skill.boss_zhizhe.getCards(event, player).length > 0;
+				},
+				check(event, player) {
+					return lib.skill.boss_zhizhe.getCards(event, player).some(card => get.value(card, player) > 0);
+				},
+				async content(event, trigger, player) {
+					player.storage.boss_zhizhe_phase = trigger.getParent("phaseUse", true);
+					const cards = lib.skill.boss_zhizhe.getCards(trigger, player);
+					if (cards.length) await player.gain(cards, "gain2");
+				},
+				onremove(player) { delete player.storage.boss_zhizhe_phase; },
+			},
 			boss_yingzhong: {
 				getList(type, outside) {
 					let characters = [];
@@ -10303,6 +10471,13 @@ export default () => {
 					} else {
 						player.init("boss_lvbu3");
 					}
+					if (get.mode() === "boss" && player === game.boss) {
+						// 临时曲目不改用户设置；播完后由原有ended监听继续播放此曲。
+						game.broadcastAll(() => {
+							_status.tempMusic = "ext:国战平衡/boss_lvbu_transform.ogg";
+							game.playBackgroundMusic();
+						});
+					}
 					player.update();
 					ui.clear();
 					if (player.isLinked()) {
@@ -10945,6 +11120,13 @@ export default () => {
 			boss_zhouyu: "赤壁火神",
 			boss_pangtong: "涅槃凤雏",
 			boss_zhugeliang: "祭风卧龙",
+			boss_wu_zhugeliang: "武诸葛亮",
+			boss_dcqingshi: "情势",
+			boss_dcjincui: "尽瘁",
+			boss_dcjincui_info: "锁定技。①游戏开始时，你将手牌摸至七张。②摸牌阶段，你改为展示牌堆顶七张牌。若其中有点数为7的牌，你减1点体力上限，然后将体力回复至体力上限。然后，你获得其中任意张点数之和为7的正整数倍的牌，其余牌置入弃牌堆。",
+			boss_dcqingshi_info: "转换技，当你于出牌阶段使用牌时，若你手牌中有同名牌，你可以：阳，令此牌对其中一个目标角色造成的伤害+1；阴，令任意名其他角色各弃置一张牌。",
+			boss_zhizhe: "智哲",
+			boss_zhizhe_info: "出牌阶段限一次，当你使用或打出一张手牌结算结束后，你可以获得之。",
 			boss_zhangjiao: "天公将军",
 			boss_zuoci: "迷之仙人",
 			boss_liubei: "蜀汉烈帝",

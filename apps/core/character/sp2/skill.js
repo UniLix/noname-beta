@@ -16471,7 +16471,13 @@ const skills = {
 					return target != player;
 				})
 				.set("ai", function (target) {
-					var att = get.attitude(_status.event.player, target);
+					// 挑战模式按实际阵营选敌人，不让随机兜底把盟军当作优先目标。
+					const viewer = player._trueMe || player;
+					if (get.mode() === "boss" && typeof viewer.side === "boolean" && typeof target.side === "boolean") {
+						if (viewer.side === target.side) return -100;
+						return 20 + Math.max(0, target.hp) + Math.max(0, target.hp) / Math.max(1, target.maxHp);
+					}
+					var att = get.attitude(viewer, target);
 					if (att < 0) {
 						return -att + 3;
 					}
