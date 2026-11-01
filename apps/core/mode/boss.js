@@ -2,7 +2,6 @@
 import { lib, game, ui, get, ai, _status } from "noname";
 import xiandingCharacters from "../character/xianding/character.js";
 export const type = "mode";
-
 /**
  * @type { importModeConfig }
  */
@@ -704,28 +703,19 @@ export default {
 							filterCard: function (card, player, event) {
 								return get.name(card) === "sha" && lib.filter.filterCard.apply(this, arguments);
 							},
-							"使用一张杀，或交给" + get.translation(player) + "两张牌"
-						);
-					} else {
-						event.directfalse = true;
-					}
-					"step 1";
-					var nh = target.countCards("he");
-					if ((event.directfalse || !result.bool) && nh) {
-						if (nh <= 2) {
-							event.directcards = true;
-						} else {
-							target.chooseCard("he", 2, true, "将两张牌交给" + get.translation(player));
-						}
-					} else {
-						event.finish();
-					}
-					"step 2";
-					if (event.directcards) {
-						target.give(target.getCards("he"), player);
-					} else if (result.bool && result.cards && result.cards.length) {
-						target.give(result.cards, player);
-					}
+							prompt: "使用一张杀，或交给" + get.translation(player) + "两张牌",
+						}).forResult();
+					usedSha = !!result?.bool;
+				}
+				if (usedSha || !target.isIn() || !player.isIn() || event.finished) return;
+				const nh = target.countCards("he");
+				if (!nh) return;
+				if (nh <= 2) {
+					await target.give(target.getCards("he"), player);
+				} else {
+					const result = await target.chooseCard("he", 2, true, "将两张牌交给" + get.translation(player)).forResult();
+					if (result?.bool && result.cards?.length && target.isIn() && player.isIn()) await target.give(result.cards, player);
+				}
 				},
 				ai: {
 					order: 7,
@@ -868,7 +858,7 @@ export default {
 					...xiandingCharacters.wu_zhugeliang,
 					hp: 7,
 					maxHp: 7,
-					skills: xiandingCharacters.wu_zhugeliang.skills.map(skill => ({ dcjincui: "boss_dcjincui", dcqingshi: "boss_dcqingshi", dczhizhe: "boss_zhizhe" })[skill] || skill),
+					skills: xiandingCharacters.wu_zhugeliang.skills.map(skill => ({ dcjincui: "boss_dcjincui", dcqingshi: "boss_dcqingshi", dczhizhe: "dczhizhe" })[skill] || skill),
 					img: "image/character/wu_zhugeliang.jpg",
 					dieAudios: ["wu_zhugeliang"],
 					isBoss: true,
@@ -2849,57 +2839,122 @@ export default {
 			boss_dcjincui: {
 				audio: "dcjincui",
 				forced: true,
-				trigger: { player: "phaseDrawBefore" },
-				group: "boss_dcjincui_start",
-				getCombinations(cards) {
-					const combinations = [];
-					for (let mask = 1; mask < (1 << cards.length); mask++) {
-						const chosen = cards.filter((card, index) => mask & (1 << index));
-						const sum = chosen.reduce((total, card) => total + (get.number(card, false) || 0), 0);
-						if (sum > 0 && sum % 7 === 0) combinations.push(chosen);
-					}
-					return combinations;
-				},
+				trigger: { player: "phaseZhunbeiBegin" },
+				filter(event, player) { return player.maxHp > 0 && Number.isFinite(player.maxHp); },
 				async content(event, trigger, player) {
-					trigger.cancel();
-					const cards = get.cards(7);
-					await game.cardsGotoOrdering(cards);
-					await player.showCards(cards, "尽瘁：展示牌堆顶七张牌");
-					if (player.isIn() && cards.some(card => get.number(card, false) === 7)) {
-						await player.loseMaxHp();
-						if (player.isIn() && player.hp < player.maxHp) await player.recover(player.maxHp - player.hp);
-					}
-					const combinations = lib.skill.boss_dcjincui.getCombinations(cards);
-					let chosen = [];
-					if (player.isIn() && combinations.length) {
-						const score = combo => combo.reduce((sum, card) => sum + get.value(card, player), 0);
-						const best = combinations.slice().sort((a, b) => score(b) - score(a))[0];
-						const result = await player.chooseButton(["尽瘁：获得点数之和为7的正整数倍的牌", cards], [1, cards.length], true)
-							.set("filterButton", button => combinations.some(combo => combo.includes(button.link) && ui.selected.buttons.every(selected => combo.includes(selected.link))))
-							.set("filterOk", () => {
-								const sum = ui.selected.buttons.reduce((total, button) => total + (get.number(button.link, false) || 0), 0);
-								return sum > 0 && sum % 7 === 0;
-							})
-							.set("ai", button => best.includes(button.link) ? 10 : -1).forResult();
-						if (result?.bool && combinations.some(combo => combo.length === result.links?.length && combo.every(card => result.links.includes(card)))) chosen = result.links;
-					}
-					chosen = chosen.filter(card => get.position(card, true) === "o");
-					if (chosen.length && player.isIn()) {
-						await player.gain(chosen, "gain2");
-					}
-					const rest = cards.filter(card => get.position(card, true) === "o");
-					if (rest.length) await game.cardsDiscard(rest);
+					player.storage.boss_dcjincui_phase = trigger.getParent("phase", true);
+					player.addTempSkill("boss_dcjincui_draw", "phaseAfter");
+					const result = await player.chooseToGuanxing(player.maxHp)
+						.set("prompt", "尽瘁：将观看的牌以任意顺序置于牌堆顶或牌堆底")
+						.set("processAI", list => {
+							const cards = list[0][1].slice();
+							const top = [], bottom = [];
+							const isRecoveryCard = card => get.name(card, player) === "tao" || get.number(card, false) === 7;
+							const recovery = player.maxHp - 1 - player.hp;
+							const heal = player.maxHp > 1 && recovery > 0 && (player.hp <= 2 || recovery >= 2);
+							// 判定阶段先于摸牌阶段，按实际判定顺序预留牌，不能只按摸牌价值排序。
+							const judges = (player.skipList.includes("phaseJudge") ? [] : player.getCards("j"))
+								.filter(card => {
+									const info = lib.card[card.viewAs || card.name];
+									return info?.judge && info.effect && !info.noEffect;
+								}).slice(0, cards.length);
+							const evaluations = judges.map(card => {
+								const judge = get.judge(card);
+								return cards.map(current => judge(current));
+							});
+							const owners = new Map(), chosen = [];
+							// 为多个判定匹配安全牌，避免先前判定占用后续判定唯一可用的花色。
+							function assign(index, visited, reserved = -1) {
+								const candidates = cards.map((card, i) => i).filter(i => i !== reserved && evaluations[index][i] >= 0)
+									.sort((a, b) => evaluations[index][b] - evaluations[index][a] || get.value(cards[a], player) - get.value(cards[b], player));
+								for (const i of candidates) {
+									if (visited.has(i)) continue;
+									visited.add(i);
+									if (!owners.has(i) || assign(owners.get(i), visited, reserved)) {
+										owners.set(i, index);
+										chosen[index] = i;
+										return true;
+									}
+								}
+								return false;
+							}
+							// 低血量时尽量在不影响安全判定的前提下预留一张回血牌。
+							let reservedRecovery = false;
+							if (heal && !player.skipList.includes("phaseDraw") && cards.length > judges.length) {
+								for (let i = 0; i < cards.length; i++) {
+									if (!isRecoveryCard(cards[i])) continue;
+									owners.clear();
+									chosen.length = 0;
+									if (judges.every((card, index) => assign(index, new Set(), i))) {
+										reservedRecovery = true;
+										break;
+									}
+								}
+							}
+							if (!reservedRecovery) {
+								owners.clear();
+								chosen.length = 0;
+								judges.forEach((card, i) => assign(i, new Set()));
+							}
+							judges.forEach((card, index) => {
+								if (chosen[index] === undefined) {
+									const remaining = cards.map((card, i) => i).filter(i => !owners.has(i));
+									remaining.sort((a, b) => evaluations[index][b] - evaluations[index][a] || get.value(cards[a], player) - get.value(cards[b], player));
+									chosen[index] = remaining[0];
+									owners.set(remaining[0], index);
+								}
+								top.push(cards[chosen[index]]);
+							});
+							const drawCards = cards.filter((card, i) => !owners.has(i));
+							let keptRecovery = false;
+							for (const card of drawCards.sort((a, b) => (heal ? Number(isRecoveryCard(b)) - Number(isRecoveryCard(a)) : 0) || get.value(b, player) - get.value(a, player))) {
+								if (isRecoveryCard(card)) {
+									if (heal && !keptRecovery) {
+										top.push(card);
+										keptRecovery = true;
+									} else bottom.push(card);
+								} else if (get.value(card, player) < 0) bottom.push(card);
+								else top.push(card);
+							}
+							return [top, bottom];
+						}).forResult();
+					// 观星返回的顶部列表已反转，保存为实际牌堆顶顺序。
+					player.storage.boss_dcjincui_cards = (result?.moved?.[0] || []).slice().reverse();
 				},
 				subSkill: {
-					start: {
+					draw: {
 						audio: "dcjincui",
-						// 挑战模式gameStart早于起始发牌，首个回合前补牌才是“摸至七张”。
-						trigger: { global: "phaseBefore" },
+						charlotte: true,
 						forced: true,
-						filter(event, player) { return game.phaseNumber === 0 && !player.storage.boss_dcjincui_started; },
+						trigger: { player: "phaseDrawBefore" },
+						filter(event, player) {
+							return event.getParent("phase", true) === player.storage.boss_dcjincui_phase;
+						},
+						onremove(player) {
+							delete player.storage.boss_dcjincui_phase;
+							delete player.storage.boss_dcjincui_cards;
+						},
 						async content(event, trigger, player) {
-							player.storage.boss_dcjincui_started = true;
-							if (player.countCards("h") < 7) await player.draw(7 - player.countCards("h"));
+							trigger.cancel();
+							// 只获得此次置顶且仍在牌堆内的牌，不补足被判定等过程消耗的牌。
+							const cards = (player.storage.boss_dcjincui_cards || []).filter(card => card.parentNode === ui.cardPile);
+							player.removeSkill("boss_dcjincui_draw");
+							if (!cards.length) return;
+							await game.cardsGotoOrdering(cards);
+							await player.showCards(cards, "尽瘁：展示此前置于牌堆顶的牌");
+							if (!player.isIn()) return;
+							const available = cards.filter(card => get.position(card, true) === "o");
+							if (!available.length) return;
+							const gain = player.gain(available, "gain2");
+							await gain;
+							const recoveryCards = (gain.getg?.(player) || []).filter(card => get.name(card, player) === "tao" || get.number(card, false) === 7);
+							for (const card of recoveryCards) {
+								if (!player.isIn()) break;
+								if (player.getCards("he").includes(card)) await player.discard(card);
+								if (!player.isIn()) break;
+								await player.loseMaxHp(1);
+								if (player.isIn() && player.hp < player.maxHp) await player.recover(player.maxHp - player.hp);
+							}
 						},
 					},
 				},
@@ -2946,7 +3001,7 @@ export default {
 				mark: true,
 				marktext: "☯",
 				intro: { content(storage) {
-					return storage ? "下次发动：令任意名其他角色各弃置一张牌" : "下次发动：令此牌对其中一个目标角色造成的伤害+1";
+					return storage ? "下次发动：令一名其他角色弃置一张牌" : "下次发动：令此牌对其中一个目标角色造成的伤害+1";
 				} },
 				filter(event, player) {
 					if (!player.isPhaseUsing() || !player.hasCard(card => get.name(card) === event.card.name, "h")) return false;
@@ -2956,8 +3011,8 @@ export default {
 					const discard = !!player.storage.boss_dcqingshi;
 					const result = await player.chooseTarget(
 						get.prompt(event.skill),
-						discard ? "令任意名其他角色各弃置一张牌" : "令此牌对其中一个目标角色造成的伤害+1",
-						discard ? [1, Infinity] : 1,
+						discard ? "令一名其他角色弃置一张牌" : "令此牌对其中一个目标角色造成的伤害+1",
+						1,
 						(card, player, target) => discard ? target !== player : trigger.targets.includes(target))
 						.set("ai", target => lib.skill.boss_dcqingshi.getTargetScore(player, target, trigger.card, discard)).forResult();
 					event.result = { bool: !!result?.bool, targets: result?.targets, cost_data: discard };
@@ -3212,9 +3267,8 @@ export default {
 						return history.getParent() == event;
 					});
 				},
-				content() {
-					"step 0";
-					event.targets = game
+				async content(event, trigger, player) {
+					const targets = game
 						.filterPlayer(function (current) {
 							if (current == player || current == _status.currentPhase) {
 								return false;
@@ -3229,8 +3283,8 @@ export default {
 							return history.getParent() == trigger;
 						})
 						.sortBySeat(_status.currentPhase);
-					"step 1";
-					var target = event.targets.shift();
+					for (const target of targets) {
+					if (!player.isIn() || event.finished) break;
 					event.target = target;
 					if (!target.isIn()) {
 						continue;
@@ -4191,10 +4245,10 @@ export default {
 								}
 							}
 							return true;
-						});
-					"step 2";
-					if (result.bool) {
-						player.gain(result.links, "gain2", "log");
+						},
+					}).forResult();
+					if (result?.bool) {
+						await player.gain(result.links, "gain2", "log");
 					}
 				},
 			},
@@ -10015,11 +10069,10 @@ export default {
 							}
 							return 5 - target.getDamagedHp();
 						}
-					};
-					"step 1";
-					if (result.bool) {
+					}).forResult();
+					if (result?.bool) {
 						player.logSkill("tashui", result.targets, "thunder");
-						result.targets[0].turnOver();
+						await result.targets[0].turnOver();
 					}
 				},
 				ai: {
@@ -10933,8 +10986,8 @@ export default {
 			boss_wu_zhugeliang: "武诸葛亮",
 			boss_dcqingshi: "情势",
 			boss_dcjincui: "尽瘁",
-			boss_dcjincui_info: "锁定技。①游戏开始时，你将手牌摸至七张。②摸牌阶段，你改为展示牌堆顶七张牌。若其中有点数为7的牌，你减1点体力上限，然后将体力回复至体力上限。然后，你获得其中任意张点数之和为7的正整数倍的牌，其余牌置入弃牌堆。",
-			boss_dcqingshi_info: "转换技，当你于出牌阶段使用牌时，若你手牌中有同名牌，你可以：阳，令此牌对其中一个目标角色造成的伤害+1；阴，令任意名其他角色各弃置一张牌。",
+			boss_dcjincui_info: "锁定技，准备阶段，你观看牌堆顶X张牌，并将其以任意顺序置于牌堆顶或牌堆底，然后本回合的摸牌阶段改为展示你以此法置于牌堆顶的牌并获得之。你以此法每获得一张【桃】或点数为7的牌，便弃置之并减1点体力上限，然后将体力回复至体力上限（X为你的体力上限）。",
+			boss_dcqingshi_info: "转换技，当你于出牌阶段使用牌时，若你手牌中有同名牌，你可以：阳，令此牌对其中一个目标角色造成的伤害+1；阴，令一名其他角色弃置一张牌。",
 			boss_zhizhe: "智哲",
 			boss_zhizhe_info: "出牌阶段限一次，当你使用或打出一张手牌结算结束后，你可以获得之。",
 			boss_zhangjiao: "天公将军",

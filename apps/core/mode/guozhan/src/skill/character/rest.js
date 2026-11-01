@@ -17062,6 +17062,12 @@ export default {
 	},
 	xuanlve: {
 		audio: 2,
+		preferDefensiveHorse(player, target) {
+			if (get.mode() !== "boss" || ![player.name, player.name1, player.name2].some(name => ["boss_lvbu1", "boss_lvbu2", "boss_lvbu3"].includes(name))) return false;
+			const isEnemy = current => current !== player && (typeof player.side === "boolean" && typeof current.side === "boolean" ? current.side !== player.side : get.attitude(player, current) < 0);
+			return isEnemy(target) && !game.hasPlayer(current => isEnemy(current) && player.inRange(current)) &&
+				target.getCards("e").some(card => get.subtype(card) === "equip3" && lib.filter.canBeDiscarded(card, player, target));
+		},
 		audioname2: { boss_lvbu3: "olxuanfeng" },
 		trigger: {
 			player: "loseAfter",
@@ -17082,6 +17088,7 @@ export default {
 					},
 					ai: target => {
 						const player = get.player();
+						if (lib.skill.xuanlve.preferDefensiveHorse(player, target)) return 100;
 						return get.effect(target, { name: "guohe_copy2" }, player, player);
 					},
 				})
@@ -17089,7 +17096,13 @@ export default {
 				.forResult();
 		},
 		async content(event, trigger, player) {
-			await player.discardPlayerCard({ target: event.targets[0], position: "he", forced: true });
+			const target = event.targets[0];
+			const next = player.discardPlayerCard({ target, position: "he", forced: true });
+			if (lib.skill.xuanlve.preferDefensiveHorse(player, target)) {
+				const originalAI = next.ai;
+				next.set("ai", button => target.getCards("e").includes(button.link) && get.subtype(button.link) === "equip3" ? 100 : originalAI(button));
+			}
+			await next;
 		},
 		ai: {
 			noe: true,

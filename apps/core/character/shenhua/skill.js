@@ -4301,8 +4301,11 @@ const skills = {
 		ai: {
 			effect: {
 				target(card, player, target, current) {
-					if (typeof card === "object" && get.name(card) === "sha" && target.mayHaveShan(player, "use")) {
-						return [0.6, 0.75];
+					if (get.name(card) === "sha") {
+						// 屯田只补偿失牌，不是免伤；避免固定正收益把敌方受伤收益抵消。
+						// 此处直接返回，防止后面的响应牌通用估值再次高估屯田。
+						if (_status.currentPhase === target || target.hp <= 2 || !target.mayHaveShan(player, "use")) return 1;
+						return 0.85;
 					}
 					if (!target.hasFriend() && !player.hasUnknown()) {
 						return;

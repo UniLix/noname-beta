@@ -34147,6 +34147,14 @@ const skills = {
 	},
 	dczhizhe: {
 		audio: 2,
+		// 留下一张普通同名牌，让可回收的复制牌持续满足情势条件。
+		isQingshiReserve(player, card) {
+			if (get.itemtype(card) !== "card" || card.hasGaintag("dczhizhe") || !player.hasSkill("dcqingshi")) return false;
+			const name = get.name(card, player);
+			const hand = player.getCards("h");
+			return hand.includes(card) && hand.some(current => current.hasGaintag("dczhizhe") && get.name(current, player) === name) &&
+				hand.filter(current => !current.hasGaintag("dczhizhe") && get.name(current, player) === name).length === 1;
+		},
 		enable: "phaseUse",
 		limited: true,
 		filterCard: true,
@@ -34160,7 +34168,15 @@ const skills = {
 			if (get.type(card) !== "basic" && get.type(card) !== "trick") {
 				return 0;
 			}
-			return get.value(card) - 7.5;
+			const player = _status.event.player;
+			const value = get.value(card, player);
+			if (get.type(card) === "trick" && get.tag(card, "damage")) {
+				const useValue = player.getUseValue(card);
+				// 优先复制当下有正收益的伤害锦囊，避免为高牌面价值复制伤害队友的AOE。
+				if (useValue > 0) return 10 + Math.min(10, useValue) + Math.max(0, value);
+				return 0;
+			}
+			return value - 7.5;
 		},
 		async content(event, trigger, player) {
 			const card = event.cards[0];
@@ -34182,16 +34198,19 @@ const skills = {
 			effect: {
 				mod: {
 					aiOrder(player, card, num) {
+						if (lib.skill.dczhizhe.isQingshiReserve(player, card)) return -1;
 						if (num > 0 && get.itemtype(card) === "card" && card.hasGaintag("dczhizhe")) {
-							return num + 0.16;
+							return num + (player.hasSkill("dcqingshi") && player.hasCard(current => current !== card && get.name(current, player) === get.name(card, player), "h") ? 3 : 0.16);
 						}
 					},
 					aiValue(player, card, num) {
+						if (lib.skill.dczhizhe.isQingshiReserve(player, card)) return Math.max(num, 12);
 						if (num > 0 && get.itemtype(card) === "card" && card.hasGaintag("dczhizhe")) {
 							return 2 * num;
 						}
 					},
 					aiUseful(player, card, num) {
+						if (lib.skill.dczhizhe.isQingshiReserve(player, card)) return Math.max(num, 12);
 						if (num > 0 && !player._dczhizhe_mod && get.itemtype(card) === "card" && card.hasGaintag("dczhizhe")) {
 							if (player.canIgnoreHandcard(card)) {
 								return Infinity;
